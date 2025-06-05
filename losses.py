@@ -14,13 +14,17 @@ from data_generator import Graph, AssociativeRecallData
 
 
 class Loss(ABC):
+    # Abstract base class for loss functions
 
     def get_loss_single_task(self, params, rng_env, rng_seed):
+        # To be implemented by subclasses: computes loss for a single task/sample
         pass
 
     def __call__(self, params, rng, train=True):
+        # Main entry point for computing the loss over a batch
         rng_env, rng_seed = jax.random.split(rng, 2)
 
+        # Generate environment seeds for each batch element
         if train and self.cfg["num_train_seed"] > 0:
             rng_envs = jax.random.choice(
                 rng_env,
@@ -30,10 +34,12 @@ class Loss(ABC):
         else:
             rng_envs = jax.random.split(rng_env, self.cfg["batch_size"])
 
+        # Vectorized computation of loss and log_dict for each batch element
         loss, log_dict = jax.vmap(self.get_loss_single_task, in_axes=(None, 0, None))(
             params, rng_envs, rng_seed
         )
 
+        # Aggregate statistics for logging
         log_dict = {
             "data_loss": loss,
             #             "data_loss_avr": jnp.mean(loss),
@@ -45,6 +51,7 @@ class Loss(ABC):
             **log_dict,
         }
 
+        # Pooling strategies for aggregating loss across the batch
         if self.cfg["data_pooling"] == "mean":
             return jnp.mean(loss), log_dict
         if self.cfg["data_pooling"] == "lp":
@@ -73,6 +80,7 @@ class Loss(ABC):
 
     @partial(jax.jit, static_argnums=(0, 2, 3))
     def eval_fn(self, params, num_batches, eval_on_train=False):
+        # Evaluate the loss over multiple batches for validation/testing
 
         def eval_step(_, rng):
             loss, log_dict = jax.vmap(self.__call__, in_axes=(None, 0, None))(
@@ -84,15 +92,18 @@ class Loss(ABC):
             eval_step, None, jax.random.split(jax.random.PRNGKey(0), num_batches)
         )
 
+        # Aggregate statistics across all batches
         return {
             k: v.mean() if "max" not in k else v.max() for (k, v) in log_dict.items()
         }
 
     def dummy_data(self):
+        # To be implemented by subclasses: returns dummy data for testing/model initialization
         pass
 
 
 def is_valid_3coloring(adjacency, colors):
+    # Checks if a coloring is a valid 3-coloring for a given adjacency matrix
     valid = True
     for i in range(3):
         subgraph = adjacency * (colors == i)
@@ -101,21 +112,22 @@ def is_valid_3coloring(adjacency, colors):
 
 
 def generate_one_hot_combinations(K, T):
-    # Generate all possible sequences of indices with T elements where each element ranges from 0 to K-1
+    # Generate all possible one-hot encoded sequences of length T with K classes
     indices = list(product(range(K), repeat=T))
 
-    # Convert these indices to one-hot vectors
     def one_hot_encode(index):
-        # Create a one-hot vector for each index in the sequence
+        # One-hot encode a sequence of indices
         return jnp.eye(K)[jnp.array(index)]
 
-    # Use vmap to apply one_hot_encode over each sequence of indices in a vectorized manner
+    # Vectorized one-hot encoding for all sequences
     one_hot_tensor = lax.map(one_hot_encode, jnp.array(indices))
 
     return one_hot_tensor
 
 
 class ColoringLoss(Loss):
+    # Loss class for the graph coloring task
+
     def __init__(self, model, cfg):
         self.model = model
         self.cfg = cfg
@@ -126,11 +138,13 @@ class ColoringLoss(Loss):
             num_vertex=n,
         )
 
+        # Canonical cycle adjacency matrix for n vertices
         CANONICAL_CYCLE = jnp.eye(n, k=-1) + jnp.eye(
             cfg["num_vertex"], k=n - 1
         )
         self.CANONICAL_CYCLE = CANONICAL_CYCLE
 
+        # Precompute all valid 3-colorings for the canonical cycle
         if True:  # self.cfg["loss"] != "fractional_coloring":
             ALL_3_HOTS = generate_one_hot_combinations(3, n)
             ALL_COLORS = jnp.argmax(ALL_3_HOTS, axis=-1)
@@ -142,6 +156,7 @@ class ColoringLoss(Loss):
                 VALID_IDS_FOR_CANONICAL_CYCLE
             ]
             self.VALID_HOTS_FOR_CANONICAL_CYCLE = ALL_3_HOTS[VALID_IDS_FOR_CANONICAL_CYCLE]
+        # Permutation matrices for cycle symmetries
         S = np.eye(n - 1)[list(permutations(range(n - 1)))].reshape((2, -1, n - 1, n - 1))[0]
         R = jnp.array([scipy.linalg.block_diag(1, P) for P in S])
         J = jnp.eye(n, k=1) + np.eye(n, k=-n + 1)
@@ -149,6 +164,7 @@ class ColoringLoss(Loss):
         self.ALL_CYCLES = (R @ C @ jnp.moveaxis(R, -1, -2), R)
 
     def expected_validity(self, adjacency, logits, permutation):
+        # Computes the expected validity of a coloring under the model's output distribution
         log_probs = jax.nn.log_softmax(logits)
         valid_hots = jnp.einsum(
             "tvh,Vv->tVh", self.VALID_HOTS_FOR_CANONICAL_CYCLE, permutation
@@ -157,6 +173,7 @@ class ColoringLoss(Loss):
         return valid_probs.sum()
 
     def best_cross_entropy(self, adjacency, logits, permutation):
+        # Computes the best cross-entropy loss over all valid colorings
         valid_colors = jnp.einsum(
             "tv,Vv->tV", self.VALID_COLORS_FOR_CANONICAL_CYCLE, permutation
         ).astype(int)
@@ -168,6 +185,7 @@ class ColoringLoss(Loss):
         return jnp.min(loss)
 
     def best_hinge(self, adjacency, logits, permutation):
+        # Computes the best hinge loss over all valid colorings
         valid_hots = jnp.einsum(
             "tvh,Vv->tVh", self.VALID_HOTS_FOR_CANONICAL_CYCLE, permutation
         ).astype(int)
@@ -177,6 +195,7 @@ class ColoringLoss(Loss):
 
     # Still under development
     def fractional_coloring(self, adjacency, logits, permutation):
+        # Fractional coloring loss (probabilistic relaxation)
         log_probs = jax.nn.log_softmax(logits)
         log_probs_neighbor = (permutation @ self.CANONICAL_CYCLE @ permutation.T) @ log_probs
 
@@ -188,6 +207,7 @@ class ColoringLoss(Loss):
 
     # Still under development
     def fractional_coloring_hinge(self, adjacency, logits, permutation):
+        # Fractional coloring loss with hinge
         log_probs = jax.nn.log_softmax(logits)
         log_probs_neighbor = (permutation @ self.CANONICAL_CYCLE @ permutation.T) @ log_probs
 
@@ -199,6 +219,7 @@ class ColoringLoss(Loss):
 
     # Still under development
     def fractional_coloring_prob(self, adjacency, logits, permutation):
+        # Fractional coloring loss (probabilistic, no log)
         log_probs = jax.nn.log_softmax(logits)
         log_probs_neighbor = (permutation @ self.CANONICAL_CYCLE @ permutation.T) @ log_probs
 
@@ -208,6 +229,7 @@ class ColoringLoss(Loss):
 
     # Still under development
     def fractional_coloring_hard(self, adjacency, logits, permutation):
+        # Fractional coloring loss with hard assignments
         probs = jax.nn.one_hot(jnp.argmax(logits, -1), logits.shape[-1])
         probs_neighbor = (permutation @ self.CANONICAL_CYCLE @ permutation.T) @ probs
 
@@ -216,11 +238,13 @@ class ColoringLoss(Loss):
         return loss
 
     def get_loss_from_input(self, params, graphs, adjacencies, permutations):
+        # Computes the loss given model parameters and input data
         logits = self.model.apply(
             params, (graphs, adjacencies)
         )
         predictions = jnp.argmax(logits, axis=-1)
 
+        # Select loss function based on config
         if self.cfg["loss"] == "validity":
             loss = 1 - is_valid_3coloring(adjacencies, predictions)
         elif self.cfg["loss"] == "expected_validity":
@@ -243,10 +267,12 @@ class ColoringLoss(Loss):
         return loss, {"inacc": 1 - is_valid_3coloring(adjacencies, predictions)}, logits
 
     def get_loss(self, params, mat_seed, rng_seed):
+        # Samples a graph and computes the loss for it
         graphs, adjacencies, permutations = self.graph_generator.sample(mat_seed, rng_seed)
         return self.get_loss_from_input(params, graphs, adjacencies, permutations)
 
     def get_loss_single_task(self, params, rng_env, rng_seed):
+        # Computes the loss for a single task, possibly with multiple seeds
         num_seed = self.cfg["num_seed"]
         if self.cfg["probabilistic"] == "single_seed":
             num_seed = 1
@@ -263,18 +289,22 @@ class ColoringLoss(Loss):
         return loss, log_dict
 
     def dummy_data(self):
+        # Returns dummy data for model initialization/testing
         rng = jax.random.PRNGKey(0)
         dummy_data, adjacency, _ = self.graph_generator.sample(rng, rng)
         return (dummy_data, adjacency)
 
 
 def custom_sigmoid_binary_cross_entropy(logits, labels):
+    # Custom implementation of sigmoid binary cross-entropy loss
     log_p = jax.nn.log_sigmoid(logits)
     log_not_p = jax.nn.log_sigmoid(-logits)
     return -labels * log_p - (1. - labels) * log_not_p
 
 
 class AssociativeRecallLoss(Loss):
+    # Loss class for the associative recall task
+
     def __init__(self, model, cfg, foobar=False):
         self.model = model
         self.cfg = cfg
@@ -286,7 +316,7 @@ class AssociativeRecallLoss(Loss):
                                                     foobar=self.foobar)
 
     def get_loss_from_input(self, params, tokens, aux):
-
+        # Computes the loss given model parameters and input data
         (label, Y, y_target) = aux
         if self.foobar:
             seq_len = tokens[0].shape[0]
@@ -295,6 +325,7 @@ class AssociativeRecallLoss(Loss):
         mask = jnp.tril(jnp.ones((seq_len, seq_len)))
         prediction = self.model.apply(params, (tokens, mask))
 
+        # Select loss function based on config
         if self.cfg["loss"] == "contrastive_hinge":
             prediction = jnp.where(Y != 0, Y / jnp.linalg.norm(Y, axis=-1, keepdims=True), 0) @ prediction[-1]
             loss = optax.hinge_loss(prediction, label * 2 - 1).mean()
@@ -325,10 +356,12 @@ class AssociativeRecallLoss(Loss):
         return loss, log_dict, prediction
 
     def get_loss(self, params, mat_seed, rng_seed):
+        # Samples data and computes the loss for it
         tokens, (label, Y, y_target) = self.data_generator.sample(mat_seed, rng_seed)
         return self.get_loss_from_input(params, tokens, (label, Y, y_target))
 
     def get_loss_single_task(self, params, rng_env, rng_seed):
+        # Computes the loss for a single task, possibly with multiple seeds
         num_seed = self.cfg["num_seed"]
         if self.cfg["probabilistic"] == "single_seed":
             num_seed = 1
@@ -350,6 +383,7 @@ class AssociativeRecallLoss(Loss):
         return loss, log_dict
 
     def dummy_data(self):
+        # Returns dummy data for model initialization/testing
         seed = jax.random.PRNGKey(1)
         tokens, label = self.data_generator.sample(seed, seed)
         #         print(tokens, label)
