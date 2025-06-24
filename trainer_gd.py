@@ -56,7 +56,10 @@ class TrainerGD(object):
         # Prepare logging dictionary
         log_dict = dict()
         log_dict["loss"] = loss
-        log_dict.update({k: v.mean() for k, v in auxs.items()})
+        log_dict.update({k: v.mean() for k, v in auxs.items() if k not in ["pred_to_log", "y_to_log"]})
+        log_dict["pred_to_log"] = auxs.get("pred_to_log", None)
+        log_dict["y_to_log"] = auxs.get("y_to_log", None)
+        log_dict["input_tokens"] = auxs.get("input_tokens", None)
 
         return GDState(params, opt_state), log_dict
 

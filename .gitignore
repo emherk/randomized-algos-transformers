@@ -195,5 +195,6 @@ cython_debug/
 .cursorindexingignore
 
 # Checkpoints
-checkpoints/
-wandb/
+checkpoints_old/
+wandb-old/
+wandb
