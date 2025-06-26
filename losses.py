@@ -107,7 +107,8 @@ class Loss(ABC):
 
         # Aggregate statistics across all batches
         return {
-            k: v.mean() if "max" not in k else v.max() for (k, v) in log_dict.items()
+            k: v.mean() if "max" not in k else v.max() for (k, v) in log_dict.items() 
+            if k not in ["pred_to_log", "y_to_log", "input_tokens"]
         }
 
     def dummy_data(self):
@@ -208,22 +209,24 @@ class AssociativeRecallLoss(Loss):
         # Return them as part of the aux/log_dict
         return (
             loss,
-                log_dict,
-                # **(
-                #     {
-                #         "pred_to_log": prediction,
-                #         "y_to_log": y_target,
-                #         "input_tokens": tokens,
-                #     }
-                #     if self.cfg.get("debug", False)
-                #     else {}
-                # ),
+            {
+                **log_dict,
+                **(
+                    {
+                        "pred_to_log": prediction,
+                        "y_to_log": y_target,
+                        "input_tokens": tokens,
+                    }
+                    if self.cfg.get("debug", False)
+                    else {}
+                ),
+            },
             prediction,
         )
 
-    def get_loss(self, params, mat_seed, rng_seed):
+    def get_loss(self, params, rng_env, rng_seed):
         # Samples data and computes the loss for it
-        tokens, (label, Y, y_target) = self.data_generator.sample(mat_seed, rng_seed)
+        tokens, (label, Y, y_target) = self.data_generator.sample(rng_env, rng_seed)
         return self.get_loss_from_input(params, tokens, (label, Y, y_target))
 
     def get_loss_single_task(self, params, rng_env, rng_seed):
@@ -238,14 +241,14 @@ class AssociativeRecallLoss(Loss):
         # QMC seeds
         if self.cfg.get("qmc", False):
             qmc_seeds = get_qmc_seeds(num_seed)
-            seed_array = jnp.array(qmc_seeds)
+            rng_seed_array = jnp.array(qmc_seeds)
         else:
-            seed_array = jax.random.split(rng_seed, num_seed)
+            rng_seed_array = jax.random.split(rng_seed, num_seed)
 
         loss, log_dict, _ = jax.tree_util.tree_map(
             lambda x: x.mean(0),
             jax.vmap(self.get_loss, in_axes=(None, None, 0))(
-                params, rng_env, seed_array
+                params, rng_env, rng_seed_array
             ),
         )
 

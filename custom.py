@@ -1,10 +1,24 @@
-X = jnp.eye(self.num_token)
-Y = jax.random.choice(rng_Y, jnp.arange(0, 2, 1), shape=(self.num_token, self.target_size))
-Y = Y.at[query_idx].set(y_query)
+import jax
 
-contrastive_target = jnp.all(Y == Y[query_idx], axis=-1)
-contrastive_target = contrastive_target / contrastive_target.sum()
+cfg = {
+    "num_train_seed": 10,
+    "batch_size": 512,
+    "probabilistic": "deterministic",  # or "single_seed" or "multiple_seed"
+}
+num_batches = 10
+rng = jax.random.split(jax.random.PRNGKey(0), num_batches)[0] # in eval fn
+rng = jax.random.split(rng, 10)[0] # in eval_step in eval_fn
 
-permutation = jax.random.permutation(rng_seed, jnp.eye(self.num_token))
-seed = X @ permutation
-X = jnp.concatenate([X, seed], axis=-1)
+rng_env, rng_seed = jax.random.split(rng, 2)
+
+rng_env = jax.random.choice(
+    rng_env,
+    jax.random.split(jax.random.PRNGKey(0), cfg["num_train_seed"]),
+    shape=(cfg["batch_size"],),
+)[0]
+
+print(rng_env.shape)
+if cfg['probabilistic'] == "deterministic":
+    rng_seed = jax.random.PRNGKey(cfg["seed"])
+
+pass

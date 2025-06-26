@@ -66,8 +66,8 @@ class AssociativeRecallData:
                               axis=0)
         return seq, (contrastive_target, Y, Y[query_idx])
 
-    def sample(self, rng, rng_seed):
-        rng_target, rng_Y, rng_query = jax.random.split(rng, 3)
+    def sample(self, rng_env, rng_seed):
+        rng_target, rng_Y, rng_query = jax.random.split(rng_env, 3)
         query_idx = jax.random.choice(rng_query, jnp.arange(self.num_token), shape=(1,))
         y_query = jax.random.choice(rng_target, jnp.arange(0, 2, 1), shape=(self.target_size,))
         return self.build(rng_Y, rng_seed, y_query, query_idx)

@@ -227,15 +227,17 @@ def train():
     np.save(f"checkpoints/associative_recall_{run.id}_log_dict", adv_log_dict)
 
 
-sweep_configuration = {
-    'method': 'grid',
-    'name': 'sweep_AR_token',
-    'parameters': dict(
-        probabilistic={'values': ["single_seed", "deterministic", "random"]},
-        num_token={'values': [10, 12, 14, 16, 18, 20]},
-        p={'values': [1, 16, 32, 100]},
-        # seed={'values': [10, 11, 12, 13, 14]},
-    )
-}
-sweep_id = wandb.sweep(sweep=sweep_configuration)
-wandb.agent(sweep_id=sweep_id, function=train, count=10)
+# sweep_configuration = {
+#     'method': 'grid',
+#     'name': 'sweep_AR_token',
+#     'parameters': dict(
+#         probabilistic={'values': ["single_seed", "deterministic", "random"]},
+#         num_token={'values': [10, 12, 14, 16, 18, 20]},
+#         p={'values': [1, 16, 32, 100]},
+#         # seed={'values': [10, 11, 12, 13, 14]},
+#     )
+# }
+# sweep_id = wandb.sweep(sweep=sweep_configuration)
+# wandb.agent(sweep_id=sweep_id, function=train, count=10)
+
+# read a file df_missing.csv to see what combinations are missing

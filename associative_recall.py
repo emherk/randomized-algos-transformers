@@ -20,7 +20,7 @@ os.environ["CUDA_VISIBLE_DEVICES"] = "1"
 
 hk.vmap.require_split_rng = False
 
-USE_WANDB = True
+USE_WANDB = False
 
 N = 5
 
@@ -211,6 +211,39 @@ def train():
         log_metric = trainer.train_iter(cfg["num_jit_batches"])
         eval_metric = loss_fn.eval_fn(trainer.get_params(), 10)
 
+
+        if cfg["debug"]:
+            # log_metric is a dict of arrays, shape (num_jit_batches, ...)
+            # Get the last batch's predictions and targets to print
+            pred_to_log = log_metric["pred_to_log"]
+            y_to_log = log_metric["y_to_log"]
+            input_tokens = log_metric["input_tokens"]
+            # print("Sample predictions:", pred_to_log)
+            # print("Sample targets:", y_to_log)
+            pred_to_log_np = np.array(pred_to_log)
+            y_to_log_np = np.array(y_to_log)
+            input_tokens_np = np.array(input_tokens)
+
+            # add bce loss to third column
+            loss = custom_sigmoid_binary_cross_entropy(
+                pred_to_log_np[:, :1], y_to_log_np[:, :1]
+            )
+            loss = np.array(loss.squeeze(1))  # Remove the size-1 dimension at axis -2
+
+            # make input tokens a numpy array
+            df = pd.DataFrame(
+                {
+                    "pred": [row for row in pred_to_log_np[:, 0].squeeze(1)],
+                    "target": [row for row in y_to_log_np[:, 0].squeeze(1)],
+                    "loss": [row[0] for row in loss.mean(axis=2)],
+                    "input_tokens": [row for row in input_tokens_np[:, 0]],
+                }
+            )
+            # save target and input_tokens to csv
+            # if t == cfg['num_steps'] // cfg['num_jit_batches'] - 1:
+            #     df.to_csv(f"checkpoints/associative_recall_{run.id}_{t}_io.csv", index=False)
+
+
         log_dict = {}
         log_dict.update({k: v.mean().item() for k, v in log_metric.items()})
         log_dict.update({k + "_eval": v.mean().item() for k, v in eval_metric.items()})
@@ -232,9 +265,9 @@ def train():
         wandb.log({"final_" + k: v for k, v in log_dict.items()})
 
     print(f"Saving to {run_id}")
-    np.save(f"checkpoints/associative_recall_{run_id}_q{cfg['p']}_c{cfg['num_token']}", (cfg, trainer.get_params()))
-    adv_log_dict = save_advanced_log(cfg, loss_fn, trainer.get_params())
-    np.save(f"checkpoints/associative_recall_{run_id}_log_dict", adv_log_dict)
+    # np.save(f"checkpoints/associative_recall_{run_id}_q{cfg['p']}_c{cfg['num_token']}", (cfg, trainer.get_params()))
+    # adv_log_dict = save_advanced_log(cfg, loss_fn, trainer.get_params())
+    # np.save(f"checkpoints/associative_recall_{run_id}_log_dict", adv_log_dict)
 
 if __name__ == "__main__":
     train()
